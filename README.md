@@ -25,9 +25,13 @@ OPTIONS
            specific command. See https://julialang.github.io/Pkg.jl/v1/repl/
            for documentation of the syntax and the available commands.
 
-       --project[=path]
+       --project[=<path>]
            Set the home project/environment.
            Equivalent to Julia's `--project` switch.
+
+       --julia=<path>
+           Specify path to, or command for, the Julia executable.
+           Overrides the executable set when installing the CLI.
 
        --update
            Allow the subsequent commands to update package registries.
@@ -90,7 +94,7 @@ Keyword arguments:
 It is possible to download and extract a prebuilt script with default settings.
 For example, to download the latest release you can run the following
 ```bash
-$ curl -L https://github.com/fredrikekre/jlpkg/releases/download/v1.0.3/jlpkg-v1.0.3.tar.gz | \
+$ curl -L https://github.com/fredrikekre/jlpkg/releases/download/v1.1.1/jlpkg-v1.1.1.tar.gz | \
   tar -xzC /usr/local/bin
 ```
 This will extract the executable script `jlpkg` and place it in `/usr/local/bin`.

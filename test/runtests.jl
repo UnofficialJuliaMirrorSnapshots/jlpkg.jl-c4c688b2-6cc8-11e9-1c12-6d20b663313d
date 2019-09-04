@@ -7,6 +7,22 @@ const test_cmd = ```$(Base.julia_cmd()) $(jlpkg.default_julia_flags)
 const jlpkg_version = match(r"^version = \"(\d+.\d+.\d+)\"$"m,
         read(joinpath(root, "Project.toml"), String)).captures[1]
 
+function download_release(v::VersionNumber)
+    x, y, z = v.major, v.minor, v.patch
+    julia_exec = cd(mktempdir()) do
+        julia = "julia-$(x).$(y).$(z)-linux-x86_64"
+        tarball = "$(julia).tar.gz"
+        sha256 = "julia-$(x).$(y).$(z).sha256"
+        run(`curl -o $(tarball) -L https://julialang-s3.julialang.org/bin/linux/x64/$(x).$(y)/$(tarball)`)
+        run(`curl -o $(sha256) -L https://julialang-s3.julialang.org/bin/checksums/$(sha256)`)
+        run(pipeline(`grep $(tarball) $(sha256)`, `sha256sum -c`))
+        mkpath(julia)
+        run(`tar -xzf $(tarball) -C $(julia) --strip-components 1`)
+        return abspath(julia, "bin", "julia")
+    end
+    return julia_exec
+end
+
 mktempdir() do tmpdir; mktempdir() do depot
     withenv("PATH" => tmpdir * (Sys.iswindows() ? ';' : ':') * get(ENV, "PATH", ""),
             "JULIA_DEPOT_PATH" => depot, "JULIA_PKG_DEVDIR" => nothing) do
@@ -56,6 +72,21 @@ mktempdir() do tmpdir; mktempdir() do depot
         withenv("JULIA_LOAD_PATH" => tmpdir) do # Should work even though Pkg is not in LOAD_PATH
             @test success(`$(test_cmd) --update st -m`)
         end
+        # Test --julia flag
+        if Sys.islinux() && get(ENV, "CI", nothing) == "true"
+            julia10 = download_release(v"1.0.4")
+            julia11 = download_release(v"1.1.1")
+            stdout, stderr = joinpath.(tmpdir, ("stdout.txt", "stderr.txt"))
+            @test success(pipeline(`$(test_cmd) --julia=$(julia11) --version`, stdout=stdout, stderr=stderr))
+            @test occursin(", julia version 1.1.1", read(stdout, String))
+            @test isempty(read(stderr, String))
+            @test success(pipeline(`$(test_cmd) --julia=$(julia11) --julia=$(julia10) --version`, stdout=stdout, stderr=stderr))
+            @test occursin(", julia version 1.0.4", read(stdout, String))
+            @test isempty(read(stderr, String))
+            @test !success(pipeline(`$(test_cmd) --julia=juliafoobar --version`, stdout=stdout, stderr=stderr))
+            @test isempty(read(stdout, String))
+            @test occursin("Error: IOError: could not spawn `juliafoobar", read(stderr, String))
+        end
         # Smoke test all Pkg commands in interpreted mode
         @test success(`$(test_cmd) activate foo`)
         @test success(`$(test_cmd) add SpecialFunctions=276daf66-3868-5448-9aa4-cd146d93841b`)
@@ -89,30 +120,31 @@ mktempdir() do tmpdir; mktempdir() do depot
         @test occursin("jlpkg - command line interface", read(stdout, String))
         @test isempty(read(stderr, String))
         @test !success(pipeline(`$(test_cmd)`, stdout=stdout, stderr=stderr))
-        @test occursin("No input arguments, showing help:", read(stdout, String))
-        @test occursin("jlpkg - command line interface", read(stdout, String))
+        @test isempty(read(stdout, String))
+        @test occursin("No input arguments, showing help:", read(stderr, String))
+        @test occursin("jlpkg - command line interface", read(stderr, String))
         @test success(pipeline(`$(test_cmd) --version`, stdout=stdout, stderr=stderr))
         @test occursin("jlpkg version $(jlpkg_version), julia version $(VERSION)", read(stdout, String))
         @test isempty(read(stderr, String))
         # Error paths
         @test !success(pipeline(`$(test_cmd) --project=$tmpdir rm`, stdout=stdout, stderr=stderr))
-        @test occursin("PkgError:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("PkgError:", read(stderr, String))
         @test !success(pipeline(`$(test_cmd) --project=$tmpdir st --help`, stdout=stdout, stderr=stderr))
-        @test occursin("PkgError:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("PkgError:", read(stderr, String))
         @test !success(pipeline(`$(test_cmd)`, stdout=stdout, stderr=stderr))
-        @test occursin("No input arguments, showing help:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("No input arguments, showing help:", read(stderr, String))
         @test !success(pipeline(`$(test_cmd) --foobar`, stdout=stdout, stderr=stderr))
-        @test occursin("Invalid argument `--foobar`, showing help:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("Invalid argument `--foobar`, showing help:", read(stderr, String))
         @test !success(pipeline(`$(test_cmd) --foobar st`, stdout=stdout, stderr=stderr))
-        @test occursin("Invalid argument `--foobar`, showing help:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("Invalid argument `--foobar`, showing help:", read(stderr, String))
         @test !success(pipeline(`$(test_cmd) --update`, stdout=stdout, stderr=stderr))
-        @test occursin("No Pkg REPL arguments, showing help:", read(stdout, String))
-        @test isempty(read(stderr, String))
+        @test isempty(read(stdout, String))
+        @test occursin("No Pkg REPL arguments, showing help:", read(stderr, String))
         # Test that --compile and --optimize options are default, see issue #1
         # by running jlpkg test suite with jlpkg --project test on CI
         @test Base.JLOptions().opt_level === Int8(2)
